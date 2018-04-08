@@ -1,0 +1,16 @@
+{
+  "name": "zygarde",
+  "version": "1.0.0",
+  "main": "zygarde.js",
+  "dependencies": {
+    "discord.js": "^11.3.2",
+    "zephyr": "^1.0.0",
+    "wordwrap": "^1.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cesium12/zygarde.git"
+  },
+  "author": "cesium",
+  "homepage": "https://github.com/cesium12/zygarde"
+}
