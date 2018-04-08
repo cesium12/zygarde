@@ -1,7 +1,7 @@
 const zephyr = require('zephyr');
 const discord = require('discord.js');
 const wordwrap = require('wordwrap')(70);
-const settings = require('./settings');
+const settings = require(`${process.cwd()}/settings`);
 
 const client = new discord.Client({disableEveryone: true});
 zephyr.subscribe(
@@ -64,7 +64,7 @@ client.on('message', async msg => {
   zephyr.send({
     class: discordToZephyr.get(server),
     instance: channel,
-    opcode: 'bot',
+    opcode: 'discord',
     sender: sender,
     message: content.join('\n'),
     signature: signature.join(') ('),
