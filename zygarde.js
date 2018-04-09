@@ -1,79 +1,124 @@
 const zephyr = require('zephyr');
 const discord = require('discord.js');
 const wordwrap = require('wordwrap')(70);
-const settings = require(`${process.cwd()}/settings`);
+const settings = require(process.argv[2] || `${process.cwd()}/settings`);
 
+// The old configuration format used arrays. Convert them.
+const classes = settings.classes.map(entry => {
+  if (!Array.isArray(entry)) return entry;
+  const [zephyrClass, discordServer, doNotSend] = entry;
+  return {zephyrClass, discordServer,
+    doNotSendToZephyr: doNotSend == '>', doNotSendToDiscord: doNotSend == '<'};
+});
+
+// Start everything up...
 const client = new discord.Client({disableEveryone: true});
 zephyr.subscribe(
-    settings.classes.map(([z, d]) => [z, '*', '*']),
+    classes.map(({zephyrClass}) => [zephyrClass, '*', '*']),
     err => { if (err) console.error(err); });
 
 client.on('ready', () => {
+  // Set the bot's nickname to list each class linked to this Discord server, if
+  // it doesn't already. (Nicknames are per-server, while activity is global.)
   for (const guild of client.guilds.values()) {
-    const matching = settings.classes
-        .filter(([z, d]) => d == guild.name)
-        .map(([z, d]) => z);
+    const matching = classes
+        .filter(({discordServer}) => discordServer == guild.name)
+        .map(({zephyrClass}) => zephyrClass);
     const nickname = matching.length ? '-c ' + matching.join(', ') : '';
     if (nickname ? (guild.me.nickname != nickname) : guild.me.nickname)
       guild.me.setNickname(nickname).catch(err => console.error(err));
   }
   client.user.setActivity('Zephyr', {type: 'LISTENING'});
 
+  // Set the handler to be called when a zephyr comes in. Ignore anything with
+  // an opcode or no message body.
   zephyr.check(async (err, msg) => {
     if (err) return console.error(err);
     if (!msg.message.trim() || msg.opcode) return;
+
+    // Chop off the realm from the sender.
     const sender = msg.sender.split('@')[0];
-    const matching = [];
-    for (const [z, d, c] of settings.classes)
-      if (z == msg.class && c != '<')
+    // Find every server that matches the class, then every channel that matches
+    // the instance, including fallbacks if none do.
+    const channels = [];
+    for (const entry of classes)
+      if (entry.zephyrClass == msg.class && !entry.doNotSendToDiscord)
         for (const guild of client.guilds.values())
-          if (d == guild.name) {
-            const channels = Array.from(guild.channels.values());
-            const channel = channels
-                .find(chan => chan.type == 'text' && chan.name == msg.instance)
-                || guild.systemChannel
-                || channels.find(chan => chan.type == 'text');
-            if (channel) matching.push(channel);
-          }
+          if (entry.discordServer == guild.name)
+            channels.push(getChannel(guild, msg.instance, entry.createChannel));
+    const matching = (await Promise.all(channels)).filter(chan => chan);
+    // OK! Now we know if this message is going anywhere.
     const ignore = matching.length ? '' : '\x1b[31mignoring\x1b[0m ';
     console.log(`\x1b[35;1mZephyr:\x1b[0m ${ignore}` +
         `${msg.class} / ${msg.instance} / ${sender}`);
     if (ignore) return;
-    for (const channel of matching) {
-      const webhook = await channel.fetchWebhooks()
-          .then(hook => hook.first() || channel.createWebhook(msg.instance))
-          .catch(err => console.error(err));
-      if (webhook) webhook.send(msg.message, {username: sender, split: true});
-      else channel.send(msg.message, {split: true});
-    }
+
+    // Send the messages.
+    for (const channel of matching)
+      channel.send(msg.message, {username: sender, split: true});
   });
 });
+
+async function getChannel(guild, name, create) {
+  const channels = Array.from(guild.channels.values())
+      .filter(chan => chan.type == 'text');
+  // Exact match to the instance, if there is one.
+  let channel = channels.find(chan => chan.name == name);
+  // If creation is enabled, try creating one.
+  if (!channel && create)
+    channel = await guild.createChannel(name).catch(err => console.error(err));
+  // Otherwise, fall back to a default.
+  if (!channel) channel = guild.systemChannel || channels[0];
+  // No luck.
+  if (!channel) return;
+  // Reuse or create a webhook so that we can set the sender.
+  const webhook = await channel.fetchWebhooks()
+      .then(hooks => hooks.first() || channel.createWebhook(name))
+      .catch(err => console.error(err));
+  // If no webhook, return the channel. Either can be used to send messages.
+  return webhook || channel;
+}
 
 client.on('disconnect', evt => console.error(evt));
 client.on('error', evt => console.error(evt));
 client.on('warn', info => console.warn(info));
 //client.on('debug', info => console.debug(info));
 
+// Now for Discord messages. Ignore bot messages and DMs.
 client.on('message', async msg => {
   if (msg.author.bot || !msg.guild) return;
+
+  // It sounds like the only way for msg.member to be unset is if the author
+  // left the server in between sending the message and the bot receiving it.
   const sender = msg.member ? msg.member.displayName : msg.author.username;
+  // Find every class that matches the server. This is easier since we're just
+  // sending to strings, rather than having to find a server with that name.
   const matching = [];
-  for (const [z, d, c] of settings.classes)
-    if (d == msg.guild.name && c != '>')
-      matching.push(z);
+  for (const entry of classes)
+    if (entry.discordServer == msg.guild.name && !entry.doNotSendToZephyr)
+      matching.push(entry.zephyrClass);
+  // Now we know if this message is going anywhere.
   const ignore = matching.length ? '' : '\x1b[31mignoring\x1b[0m ';
   console.log(`\x1b[34;1mDiscord:\x1b[0m ${ignore}` +
       `${msg.guild.name} / ${msg.channel.name} / ${sender}`);
   if (ignore) return;
+
+  // Let's stuff some extra stuff into the zsig. First, the user's activity,
+  // if they have anything set.
   const signature = [];
   const game = (msg.member || msg.author).presence.game;
   if (game && (game.url || game.name)) signature.push(game.url || game.name);
+  // Next, reuse or create an invite, if possible. If not, just say "Discord".
   const invite = await msg.channel.createInvite({maxAge: 0})
       .catch(err => console.error(err));
   signature.push((invite && invite.url) || 'Discord');
+  // Finally, line-wrap to 70 characters, then if there are any attachments,
+  // append their URLs to the message.
   const content = [];
   if (msg.cleanContent.trim()) content.push(wordwrap(msg.cleanContent));
   for (const attach of msg.attachments.values()) content.push(attach.url);
+
+  // Send the zephyrs!
   for (const zclass of matching)
     zephyr.send({
       class: zclass,
