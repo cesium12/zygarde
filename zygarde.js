@@ -11,6 +11,16 @@ const classes = settings.classes.map(entry => {
     doNotSendToZephyr: doNotSend == '>', doNotSendToDiscord: doNotSend == '<'};
 });
 
+function zephyrNormalize(str) {
+  return str.normalize('NFKC').toLowerCase();
+}
+function discordNormalize(str) {
+  // The regexes are copied from the Discord web client. The '-' is empirically
+  // the result of trying to create a channel using only invalid characters.
+  return str.replace(/[\s-~]+/g, '-').replace(/^-+/, '')
+      .replace(/[\\'!"#$%&()*+,./:;<=>?@[\]^`{|}~]/g, '').toLowerCase() || '-';
+}
+
 // Start everything up...
 const client = new discord.Client({disableEveryone: true});
 zephyr.subscribe(
@@ -42,7 +52,8 @@ client.on('ready', () => {
     // the instance, including fallbacks if none do.
     const channels = [];
     for (const entry of classes)
-      if (entry.zephyrClass == msg.class && !entry.doNotSendToDiscord)
+      if (zephyrNormalize(entry.zephyrClass) == zephyrNormalize(msg.class) &&
+          !entry.doNotSendToDiscord)
         for (const guild of client.guilds.values())
           if (entry.discordServer == guild.name)
             channels.push(getChannel(guild, msg.instance, entry.createChannel));
@@ -59,11 +70,12 @@ client.on('ready', () => {
   });
 });
 
-async function getChannel(guild, name, create) {
+async function getChannel(guild, instance, create) {
+  const name = discordNormalize(zephyrNormalize(instance));
   const channels = Array.from(guild.channels.values())
       .filter(chan => chan.type == 'text');
   // Exact match to the instance, if there is one.
-  let channel = channels.find(chan => chan.name == name);
+  let channel = channels.find(chan => zephyrNormalize(chan.name) == name);
   // If creation is enabled, try creating one.
   if (!channel && create)
     channel = await guild.createChannel(name).catch(err => console.error(err));
@@ -73,7 +85,7 @@ async function getChannel(guild, name, create) {
   if (!channel) return;
   // Reuse or create a webhook so that we can set the sender.
   const webhook = await channel.fetchWebhooks()
-      .then(hooks => hooks.first() || channel.createWebhook(name))
+      .then(hooks => hooks.first() || channel.createWebhook('zygarde'))
       .catch(err => console.error(err));
   // If no webhook, return the channel. Either can be used to send messages.
   return webhook || channel;
