@@ -65,8 +65,12 @@ client.on('ready', () => {
     if (ignore) return;
 
     // Send the messages.
-    for (const channel of matching)
-      channel.send(msg.message, {username: sender, split: true});
+    for (const [channel, guild] of matching) {
+      const member = Array.from(guild.members.values())
+          .find(mem => mem.displayName == sender);
+      channel.send(msg.message, {split: true, username: sender,
+          avatarURL: member && member.user.displayAvatarURL});
+    }
   });
 });
 
@@ -81,14 +85,15 @@ async function getChannel(guild, instance, create) {
     channel = await guild.createChannel(name).catch(err => console.error(err));
   // Otherwise, fall back to a default.
   if (!channel) channel = guild.systemChannel || channels[0];
-  // No luck.
+  // No luck. This means the server has no text channels at all, in which case,
+  // why are you running this bridge?
   if (!channel) return;
   // Reuse or create a webhook so that we can set the sender.
   const webhook = await channel.fetchWebhooks()
       .then(hooks => hooks.first() || channel.createWebhook('zygarde'))
       .catch(err => console.error(err));
   // If no webhook, return the channel. Either can be used to send messages.
-  return webhook || channel;
+  return [webhook || channel, guild];
 }
 
 client.on('disconnect', evt => console.error(evt));
