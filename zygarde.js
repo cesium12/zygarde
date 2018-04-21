@@ -39,39 +39,39 @@ client.on('ready', () => {
       guild.me.setNickname(nickname).catch(err => console.error(err));
   }
   client.user.setActivity('Zephyr', {type: 'LISTENING'});
+});
 
-  // Set the handler to be called when a zephyr comes in. Ignore anything with
-  // an opcode or no message body.
-  zephyr.check(async (err, msg) => {
-    if (err) return console.error(err);
-    if (!msg.message.trim() || msg.opcode) return;
+// Set the handler to be called when a zephyr comes in. Ignore anything with
+// an opcode or no message body.
+zephyr.check(async (err, msg) => {
+  if (err) return console.error(err);
+  if (!msg.message.trim() || msg.opcode) return;
 
-    // Chop off the realm from the sender.
-    const sender = msg.sender.split('@')[0];
-    // Find every server that matches the class, then every channel that matches
-    // the instance, including fallbacks if none do.
-    const channels = [];
-    for (const entry of classes)
-      if (zephyrNormalize(entry.zephyrClass) == zephyrNormalize(msg.class) &&
-          !entry.doNotSendToDiscord)
-        for (const guild of client.guilds.values())
-          if (entry.discordServer == guild.name)
-            channels.push(getChannel(guild, msg.instance, entry.createChannel));
-    const matching = (await Promise.all(channels)).filter(chan => chan);
-    // OK! Now we know if this message is going anywhere.
-    const ignore = matching.length ? '' : '\x1b[31mignoring\x1b[0m ';
-    console.log(`\x1b[35;1mZephyr:\x1b[0m ${ignore}` +
-        `${msg.class} / ${msg.instance} / ${sender}`);
-    if (ignore) return;
+  // Chop off the realm from the sender.
+  const sender = msg.sender.split('@')[0];
+  // Find every server that matches the class, then every channel that matches
+  // the instance, including fallbacks if none do.
+  const channels = [];
+  for (const entry of classes)
+    if (zephyrNormalize(entry.zephyrClass) == zephyrNormalize(msg.class) &&
+        !entry.doNotSendToDiscord)
+      for (const guild of client.guilds.values())
+        if (entry.discordServer == guild.name)
+          channels.push(getChannel(guild, msg.instance, entry.createChannel));
+  const matching = (await Promise.all(channels)).filter(chan => chan);
+  // OK! Now we know if this message is going anywhere.
+  const ignore = matching.length ? '' : '\x1b[31mignoring\x1b[0m ';
+  console.log(`\x1b[35;1mZephyr:\x1b[0m ${ignore}` +
+      `${msg.class} / ${msg.instance} / ${sender}`);
+  if (ignore) return;
 
-    // Send the messages.
-    for (const [channel, guild] of matching) {
-      const member = Array.from(guild.members.values())
-          .find(mem => mem.displayName == sender);
-      channel.send(msg.message, {split: true, username: sender,
-          avatarURL: member && member.user.displayAvatarURL});
-    }
-  });
+  // Send the messages.
+  for (const [channel, guild] of matching) {
+    const member = Array.from(guild.members.values())
+        .find(mem => mem.displayName == sender);
+    channel.send(msg.message, {split: true, username: sender,
+        avatarURL: member && member.user.displayAvatarURL});
+  }
 });
 
 async function getChannel(guild, instance, create) {
