@@ -124,7 +124,12 @@ client.on('message', async msg => {
   // if they have anything set.
   const signature = [];
   const game = (msg.member || msg.author).presence.game;
-  if (game && (game.url || game.name)) signature.push(game.url || game.name);
+  if (game) {
+    if (game.type != 4 && game.name) signature.push(game.name);
+    if (game.state) signature.push(game.state);
+    if (game.details) signature.push(game.details);
+    if (game.url) signature.push(game.url);
+  }
   // Next, reuse or create an invite, if possible. If not, just say "Discord".
   const invite = await msg.channel.createInvite({maxAge: 0})
       .catch(err => console.error(err));
