@@ -38,7 +38,9 @@ client.on('ready', () => {
     if (nickname ? (guild.me.nickname != nickname) : guild.me.nickname)
       guild.me.setNickname(nickname).catch(err => console.error(err));
   }
-  client.user.setActivity('Zephyr', {type: 'LISTENING'});
+  status = () => client.user.setActivity('Zephyr', {type: 'LISTENING'});
+  status();
+  setInterval(status, 60 * 60 * 1000);
 });
 
 // Set the handler to be called when a zephyr comes in. Ignore anything with
@@ -77,12 +79,13 @@ zephyr.check(async (err, msg) => {
 async function getChannel(guild, instance, create) {
   const name = discordNormalize(zephyrNormalize(instance));
   const channels = Array.from(guild.channels.values())
-      .filter(chan => chan.type == 'text');
+      .filter(chan => chan.type == 'text' || chan.type == 0);
   // Exact match to the instance, if there is one.
   let channel = channels.find(chan => zephyrNormalize(chan.name) == name);
   // If creation is enabled, try creating one.
   if (!channel && create)
-    channel = await guild.createChannel(name).catch(err => console.error(err));
+    channel = await guild.createChannel(name, {type: 'text'})
+        .catch(err => console.error(err));
   // Otherwise, fall back to a default.
   if (!channel) channel = guild.systemChannel || channels[0];
   // No luck. This means the server has no text channels at all, in which case,
