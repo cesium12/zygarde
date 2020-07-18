@@ -3,14 +3,6 @@ const discord = require('discord.js');
 const wordwrap = require('wordwrap')(70);
 const settings = require(process.argv[2] || `${process.cwd()}/settings`);
 
-// The old configuration format used arrays. Convert them.
-const classes = settings.classes.map(entry => {
-  if (!Array.isArray(entry)) return entry;
-  const [zephyrClass, discordServer, doNotSend] = entry;
-  return {zephyrClass, discordServer,
-    doNotSendToZephyr: doNotSend == '>', doNotSendToDiscord: doNotSend == '<'};
-});
-
 function zephyrNormalize(str) {
   return str.normalize('NFKC').toLowerCase();
 }
@@ -24,14 +16,14 @@ function discordNormalize(str) {
 // Start everything up...
 const client = new discord.Client({disableEveryone: true});
 zephyr.subscribe(
-    classes.map(({zephyrClass}) => [zephyrClass, '*', '*']),
-    err => { if (err) console.error(err); });
+    settings.classes.map(({zephyrClass}) => [zephyrClass, '*', '*']),
+    err => err && console.error(err));
 
 client.on('ready', () => {
   // Set the bot's nickname to list each class linked to this Discord server, if
   // it doesn't already. (Nicknames are per-server, while activity is global.)
-  for (const guild of client.guilds.values()) {
-    const matching = classes
+  for (const guild of client.guilds.cache.values()) {
+    const matching = settings.classes
         .filter(({discordServer}) => discordServer == guild.name)
         .map(({zephyrClass}) => zephyrClass);
     const nickname = matching.length ? '-c ' + matching.join(', ') : '';
@@ -54,10 +46,10 @@ zephyr.check(async (err, msg) => {
   // Find every server that matches the class, then every channel that matches
   // the instance, including fallbacks if none do.
   const channels = [];
-  for (const entry of classes)
+  for (const entry of settings.classes)
     if (zephyrNormalize(entry.zephyrClass) == zephyrNormalize(msg.class) &&
         !entry.doNotSendToDiscord)
-      for (const guild of client.guilds.values())
+      for (const guild of client.guilds.cache.values())
         if (entry.discordServer == guild.name)
           channels.push(getChannel(guild, msg.instance, entry.createChannel));
   const matching = (await Promise.all(channels)).filter(chan => chan);
@@ -69,22 +61,22 @@ zephyr.check(async (err, msg) => {
 
   // Send the messages.
   for (const [channel, guild] of matching) {
-    const member = Array.from(guild.members.values())
-        .find(mem => mem.displayName == sender);
+    const member = Array.from(guild.members.cache.values())
+        .find(mem => mem.displayName == sender || mem.user.username == sender);
     channel.send(msg.message, {split: true, username: sender,
-        avatarURL: member && member.user.displayAvatarURL});
+        avatarURL: member && member.user.displayAvatarURL({dynamic: true})});
   }
 });
 
 async function getChannel(guild, instance, create) {
   const name = discordNormalize(zephyrNormalize(instance));
-  const channels = Array.from(guild.channels.values())
-      .filter(chan => chan.type == 'text' || chan.type == 0);
+  const channels = Array.from(guild.channels.cache.values())
+      .filter(chan => chan.type == 'text');
   // Exact match to the instance, if there is one.
   let channel = channels.find(chan => zephyrNormalize(chan.name) == name);
   // If creation is enabled, try creating one.
   if (!channel && create)
-    channel = await guild.createChannel(name, {type: 'text'})
+    channel = await guild.channels.create(name, {type: 'text'})
         .catch(err => console.error(err));
   // Otherwise, fall back to a default.
   if (!channel) channel = guild.systemChannel || channels[0];
@@ -114,7 +106,7 @@ client.on('message', async msg => {
   // Find every class that matches the server. This is easier since we're just
   // sending to strings, rather than having to find a server with that name.
   const matching = [];
-  for (const entry of classes)
+  for (const entry of settings.classes)
     if (entry.discordServer == msg.guild.name && !entry.doNotSendToZephyr)
       matching.push(entry.zephyrClass);
   // Now we know if this message is going anywhere.
@@ -126,9 +118,9 @@ client.on('message', async msg => {
   // Let's stuff some extra stuff into the zsig. First, the user's activity,
   // if they have anything set.
   const signature = [];
-  const game = (msg.member || msg.author).presence.game;
-  if (game) {
-    if (game.type != 4 && game.name) signature.push(game.name);
+  for (const game of (msg.member || msg.author).presence.activities) {
+    if (game.emoji && !game.emoji.url) signature.push(game.emoji.name);
+    if (game.type != 'CUSTOM_STATUS' && game.name) signature.push(game.name);
     if (game.state) signature.push(game.state);
     if (game.details) signature.push(game.details);
     if (game.url) signature.push(game.url);
@@ -152,7 +144,7 @@ client.on('message', async msg => {
       sender: sender,
       message: content.join('\n'),
       signature: signature.join(') ('),
-    }, err => { if (err) console.error(err); });
+    }, err => err && console.error(err));
 });
 
 client.login(settings.discordToken);
