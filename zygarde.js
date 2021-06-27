@@ -14,7 +14,10 @@ function discordNormalize(str) {
 }
 
 // Start everything up...
-const client = new discord.Client({disableEveryone: true});
+const client = new discord.Client({ws: {large_threshold: 250, intents: [
+  'GUILDS', 'GUILD_MEMBERS', 'GUILD_MESSAGES',
+  'GUILD_WEBHOOKS', 'GUILD_INVITES', 'GUILD_PRESENCES',
+]}});
 zephyr.subscribe(
     settings.classes.map(({zephyrClass}) => [zephyrClass, '*', '*']),
     err => err && console.error(err));
@@ -147,4 +150,8 @@ client.on('message', async msg => {
     }, err => err && console.error(err));
 });
 
-client.login(settings.discordToken);
+client.login(settings.discordToken).catch(e => {
+  console.error(e.message);
+  client.options.ws.intents &= ~discord.Intents.PRIVILEGED;
+  client.login(settings.discordToken);
+});
