@@ -14,10 +14,10 @@ function discordNormalize(str) {
 }
 
 // Start everything up...
-const client = new discord.Client({ws: {large_threshold: 250, intents: [
+const client = new discord.Client({ws: {large_threshold: 250}, intents: [
   'GUILDS', 'GUILD_MEMBERS', 'GUILD_MESSAGES',
   'GUILD_WEBHOOKS', 'GUILD_INVITES', 'GUILD_PRESENCES',
-]}});
+]});
 zephyr.subscribe(
     settings.classes.map(({zephyrClass}) => [zephyrClass, '*', '*']),
     err => err && console.error(err));
@@ -63,20 +63,45 @@ zephyr.check(async (err, msg) => {
   if (ignore) return;
 
   // Send the messages.
-  for (const [channel, guild] of matching) {
-    const member = Array.from(guild.members.cache.values())
-        .find(mem => mem.displayName == sender || mem.user.username == sender);
-    channel.send(msg.message, {split: true, username: sender,
+  for (const {webhook, channel, thread, guild} of matching) {
+    if (!webhook) {
+      (thread || channel).send(sender + ': ' + msg.message);
+      continue;
+    }
+    const member = Array.from(guild.members.cache.values()).find(mem =>
+        mem.displayName == sender || mem.user.username == sender);
+    webhook.send({content: msg.message, threadId: thread?.id, username: sender,
         avatarURL: member && member.user.displayAvatarURL({dynamic: true})});
   }
 });
 
 async function getChannel(guild, instance, create) {
-  const name = discordNormalize(zephyrNormalize(instance));
   const channels = Array.from(guild.channels.cache.values())
-      .filter(chan => chan.type == 'text');
+      .filter(chan => chan.type == 'GUILD_TEXT');
+  const name = zephyrNormalize(instance);
+  let channel = null;
+  let thread = null;
+  // Let's first see if this goes in a thread. I have to make up some logic for
+  // this, even if it's unlikely to matter, so: if the parent channel exists,
+  // the bridge will try to use or create a thread. If the parent channel
+  // doesn't exist, the bridge will go back to using the full (unsplit) instance
+  // instead of creating both a parent channel and a thread.
+  const dot = name.indexOf('.');
+  if (dot > 0) {
+    channel = channels.find(chan =>
+        zephyrNormalize(chan.name) == discordNormalize(name.substr(0, dot)));
+    if (channel) {
+      thread = Array.from(channel.threads.cache.values()).find(thr =>
+          zephyrNormalize(thr.name) == name.substr(dot + 1));
+      if (!thread && create)
+        thread = await channel.threads.create({name: name.substr(dot + 1)})
+            .catch(err => console.error(err));
+    }
+  }
   // Exact match to the instance, if there is one.
-  let channel = channels.find(chan => zephyrNormalize(chan.name) == name);
+  if (!channel)
+    channel = channels.find(chan =>
+        zephyrNormalize(chan.name) == discordNormalize(name));
   // If creation is enabled, try creating one.
   if (!channel && create)
     channel = await guild.channels.create(name, {type: 'text'})
@@ -88,10 +113,12 @@ async function getChannel(guild, instance, create) {
   if (!channel) return;
   // Reuse or create a webhook so that we can set the sender.
   const webhook = await channel.fetchWebhooks()
-      .then(hooks => hooks.first() || channel.createWebhook('zygarde'))
+      .then(hooks =>
+          Array.from(hooks.values()).find(hook => hook.owner == client.user) ||
+          channel.createWebhook('zygarde'))
       .catch(err => console.error(err));
-  // If no webhook, return the channel. Either can be used to send messages.
-  return [webhook || channel, guild];
+  // We can send a message using any of webhook, channel, or thread.
+  return {webhook, channel, thread, guild};
 }
 
 client.on('disconnect', evt => console.error(evt));
@@ -100,8 +127,15 @@ client.on('warn', info => console.warn(info));
 //client.on('debug', info => console.debug(info));
 
 // Now for Discord messages. Ignore bot messages and DMs.
-client.on('message', async msg => {
+client.on('messageCreate', async msg => {
   if (msg.author.bot || !msg.guild) return;
+  // For threads, include the name of the parent channel, separated with a dot.
+  let channel = msg.channel;
+  let instance = channel.name;
+  if (channel.isThread()) {
+    channel = channel.parent;
+    instance = channel.name + '.' + instance;
+  }
 
   // It sounds like the only way for msg.member to be unset is if the author
   // left the server in between sending the message and the bot receiving it.
@@ -115,7 +149,7 @@ client.on('message', async msg => {
   // Now we know if this message is going anywhere.
   const ignore = matching.length ? '' : '\x1b[31mignoring\x1b[0m ';
   console.log(`\x1b[34;1mDiscord:\x1b[0m ${ignore}` +
-      `${msg.guild.name} / ${msg.channel.name} / ${sender}`);
+      `${msg.guild.name} / ${instance} / ${sender}`);
   if (ignore) return;
 
   // Let's stuff some extra stuff into the zsig. First, the user's activity,
@@ -123,13 +157,13 @@ client.on('message', async msg => {
   const signature = [];
   for (const game of (msg.member || msg.author).presence.activities) {
     if (game.emoji && !game.emoji.url) signature.push(game.emoji.name);
-    if (game.type != 'CUSTOM_STATUS' && game.name) signature.push(game.name);
+    if (game.type != 'CUSTOM' && game.name) signature.push(game.name);
     if (game.state) signature.push(game.state);
     if (game.details) signature.push(game.details);
     if (game.url) signature.push(game.url);
   }
   // Next, reuse or create an invite, if possible. If not, just say "Discord".
-  const invite = await msg.channel.createInvite({maxAge: 0})
+  const invite = await channel.createInvite({maxAge: 0})
       .catch(err => console.error(err));
   signature.push((invite && invite.url) || 'Discord');
   // Finally, line-wrap to 70 characters, then if there are any attachments,
@@ -142,12 +176,16 @@ client.on('message', async msg => {
   for (const zclass of matching)
     zephyr.send({
       class: zclass,
-      instance: msg.channel.name,
+      instance: instance,
       opcode: 'discord',
       sender: sender,
       message: content.join('\n'),
       signature: signature.join(') ('),
     }, err => err && console.error(err));
+});
+
+client.on('threadCreate', thread => {
+  thread.join().catch(err => console.error(err));
 });
 
 client.login(settings.discordToken).catch(e => {

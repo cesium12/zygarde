@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "zygarde.js",
   "dependencies": {
-    "discord.js": "^12.5.3",
+    "discord.js": "^13.1.0",
     "wordwrap": "^1.0.0",
     "zephyr": "github:cesium12/zephyrnode"
   },
