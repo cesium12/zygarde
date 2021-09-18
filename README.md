@@ -1,4 +1,4 @@
-<img src="https://cdn.bulbagarden.net/upload/9/93/718Zygarde-Cell.png" width="200">
+<img src="https://cdn2.bulbagarden.net/upload/9/93/718Zygarde-Cell.png" width="200">
 
 When the Kalos region's ecosystem falls into disarray, it appears and reveals its secret power.
 
