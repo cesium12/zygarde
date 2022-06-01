@@ -6,6 +6,7 @@ const settings = require(process.argv[2] || `${process.cwd()}/settings`);
 function zephyrNormalize(str) {
   return str.normalize('NFKC').toLowerCase();
 }
+
 function discordNormalize(str) {
   // The regexes are copied from the Discord web client. The '-' is empirically
   // the result of trying to create a channel using only invalid characters.
@@ -13,11 +14,16 @@ function discordNormalize(str) {
       .replace(/[\\'!"#$%&()*+,./:;<=>?@[\]^`{|}~]/g, '').toLowerCase() || '-';
 }
 
+function guildMatch(entry, guild) {
+  return entry.discordServer == guild.name || entry.discordServer == guild.id;
+}
+
 // Start everything up...
 const client = new discord.Client({ws: {large_threshold: 250}, intents: [
   'GUILDS', 'GUILD_MEMBERS', 'GUILD_MESSAGES',
   'GUILD_WEBHOOKS', 'GUILD_INVITES', 'GUILD_PRESENCES',
 ]});
+
 zephyr.subscribe(
     settings.classes.map(({zephyrClass}) => [zephyrClass, '*', '*']),
     err => err && console.error(err));
@@ -26,8 +32,7 @@ client.on('ready', () => {
   // Set the bot's nickname to list each class linked to this Discord server, if
   // it doesn't already. (Nicknames are per-server, while activity is global.)
   for (const guild of client.guilds.cache.values()) {
-    const matching = settings.classes
-        .filter(({discordServer}) => discordServer == guild.name)
+    const matching = settings.classes.filter(entry => guildMatch(entry, guild))
         .map(({zephyrClass}) => zephyrClass);
     const nickname = matching.length ? '-c ' + matching.join(', ') : '';
     if (nickname ? (guild.me.nickname != nickname) : guild.me.nickname)
@@ -53,7 +58,7 @@ zephyr.check(async (err, msg) => {
     if (zephyrNormalize(entry.zephyrClass) == zephyrNormalize(msg.class) &&
         !entry.doNotSendToDiscord)
       for (const guild of client.guilds.cache.values())
-        if (entry.discordServer == guild.name)
+        if (guildMatch(entry, guild))
           channels.push(getChannel(guild, msg.instance, entry.createChannel));
   const matching = (await Promise.all(channels)).filter(chan => chan);
   // OK! Now we know if this message is going anywhere.
@@ -144,7 +149,7 @@ client.on('messageCreate', async msg => {
   // sending to strings, rather than having to find a server with that name.
   const matching = [];
   for (const entry of settings.classes)
-    if (entry.discordServer == msg.guild.name && !entry.doNotSendToZephyr)
+    if (guildMatch(entry, msg.guild) && !entry.doNotSendToZephyr)
       matching.push(entry.zephyrClass);
   // Now we know if this message is going anywhere.
   const ignore = matching.length ? '' : '\x1b[31mignoring\x1b[0m ';
@@ -155,7 +160,7 @@ client.on('messageCreate', async msg => {
   // Let's stuff some extra stuff into the zsig. First, the user's activity,
   // if they have anything set.
   const signature = [];
-  for (const game of (msg.member || msg.author).presence.activities) {
+  for (const game of msg.member?.presence?.activities || []) {
     if (game.emoji && !game.emoji.url) signature.push(game.emoji.name);
     if (game.type != 'CUSTOM' && game.name) signature.push(game.name);
     if (game.state) signature.push(game.state);
@@ -165,7 +170,7 @@ client.on('messageCreate', async msg => {
   // Next, reuse or create an invite, if possible. If not, just say "Discord".
   const invite = await channel.createInvite({maxAge: 0})
       .catch(err => console.error(err));
-  signature.push((invite && invite.url) || 'Discord');
+  signature.push(invite?.url || 'Discord');
   // Finally, line-wrap to 70 characters, then if there are any attachments,
   // append their URLs to the message.
   const content = [];
