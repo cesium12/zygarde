@@ -20,8 +20,13 @@ function guildMatch(entry, guild) {
 
 // Start everything up...
 const client = new discord.Client({ws: {large_threshold: 250}, intents: [
-  'GUILDS', 'GUILD_MEMBERS', 'GUILD_MESSAGES',
-  'GUILD_WEBHOOKS', 'GUILD_INVITES', 'GUILD_PRESENCES',
+  discord.GatewayIntentBits.Guilds,
+  discord.GatewayIntentBits.GuildMembers,
+  discord.GatewayIntentBits.GuildMessages,
+  discord.GatewayIntentBits.GuildWebhooks,
+  discord.GatewayIntentBits.GuildInvites,
+  discord.GatewayIntentBits.GuildPresences,
+  discord.GatewayIntentBits.MessageContent,
 ]});
 
 zephyr.subscribe(
@@ -34,11 +39,12 @@ client.on('ready', () => {
   for (const guild of client.guilds.cache.values()) {
     const matching = settings.classes.filter(entry => guildMatch(entry, guild))
         .map(({zephyrClass}) => zephyrClass);
-    const nickname = matching.length ? '-c ' + matching.join(', ') : '';
-    if (nickname ? (guild.me.nickname != nickname) : guild.me.nickname)
-      guild.me.setNickname(nickname).catch(err => console.error(err));
+    const nickname = matching.length ? '-c ' + matching.join(', ') : null;
+    if ((guild.members.me.nickname || null) != nickname)
+      guild.members.me.setNickname(nickname).catch(err => console.error(err));
   }
-  status = () => client.user.setActivity('Zephyr', {type: 'LISTENING'});
+  status = () => client.user.setActivity('Zephyr',
+      {type: discord.ActivityType.Listening});
   status();
   setInterval(status, 60 * 60 * 1000);
 });
@@ -82,7 +88,7 @@ zephyr.check(async (err, msg) => {
 
 async function getChannel(guild, instance, create) {
   const channels = Array.from(guild.channels.cache.values())
-      .filter(chan => chan.type == 'GUILD_TEXT');
+      .filter(chan => chan.isTextBased());
   const name = zephyrNormalize(instance);
   let channel = null;
   let thread = null;
@@ -93,8 +99,8 @@ async function getChannel(guild, instance, create) {
   // instead of creating both a parent channel and a thread.
   const dot = name.indexOf('.');
   if (dot > 0) {
-    channel = channels.find(chan =>
-        zephyrNormalize(chan.name) == discordNormalize(name.substr(0, dot)));
+    channel = channels.find(chan => zephyrNormalize(chan.name) ==
+        discordNormalize(name.substr(0, dot)));
     if (channel) {
       thread = Array.from(channel.threads.cache.values()).find(thr =>
           zephyrNormalize(thr.name) == name.substr(dot + 1));
@@ -105,11 +111,11 @@ async function getChannel(guild, instance, create) {
   }
   // Exact match to the instance, if there is one.
   if (!channel)
-    channel = channels.find(chan =>
-        zephyrNormalize(chan.name) == discordNormalize(name));
+    channel = channels.find(chan => zephyrNormalize(chan.name) ==
+        (chan.isText() ? discordNormalize(name) : name));
   // If creation is enabled, try creating one.
   if (!channel && create)
-    channel = await guild.channels.create(name, {type: 'text'})
+    channel = await guild.channels.create(name)
         .catch(err => console.error(err));
   // Otherwise, fall back to a default.
   if (!channel) channel = guild.systemChannel || channels[0];
@@ -125,11 +131,6 @@ async function getChannel(guild, instance, create) {
   // We can send a message using any of webhook, channel, or thread.
   return {webhook, channel, thread, guild};
 }
-
-client.on('disconnect', evt => console.error(evt));
-client.on('error', evt => console.error(evt));
-client.on('warn', info => console.warn(info));
-//client.on('debug', info => console.debug(info));
 
 // Now for Discord messages. Ignore bot messages and DMs.
 client.on('messageCreate', async msg => {
@@ -162,7 +163,8 @@ client.on('messageCreate', async msg => {
   const signature = [];
   for (const game of msg.member?.presence?.activities || []) {
     if (game.emoji && !game.emoji.url) signature.push(game.emoji.name);
-    if (game.type != 'CUSTOM' && game.name) signature.push(game.name);
+    if (game.type != discord.ActivityType.Custom && game.name)
+      signature.push(game.name);
     if (game.state) signature.push(game.state);
     if (game.details) signature.push(game.details);
     if (game.url) signature.push(game.url);
@@ -189,12 +191,10 @@ client.on('messageCreate', async msg => {
     }, err => err && console.error(err));
 });
 
-client.on('threadCreate', thread => {
-  thread.join().catch(err => console.error(err));
-});
-
-client.login(settings.discordToken).catch(e => {
-  console.error(e.message);
-  client.options.ws.intents &= ~discord.Intents.PRIVILEGED;
-  client.login(settings.discordToken);
-});
+client.on('threadCreate', thread =>
+  thread.join().catch(err => console.error(err)));
+client.on('disconnect', evt => console.error(evt));
+client.on('error', evt => console.error(evt));
+client.on('warn', info => console.warn(info));
+//client.on('debug', info => console.debug(info));
+client.login(settings.discordToken);
