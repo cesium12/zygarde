@@ -65,7 +65,7 @@ zephyr.check(async (err, msg) => {
         !entry.doNotSendToDiscord)
       for (const guild of client.guilds.cache.values())
         if (guildMatch(entry, guild))
-          channels.push(getChannel(guild, msg.instance, entry.createChannel));
+          channels.push(getChannel(guild, msg.instance, entry));
   const matching = (await Promise.all(channels)).filter(chan => chan);
   // OK! Now we know if this message is going anywhere.
   const ignore = matching.length ? '' : '\x1b[31mignoring\x1b[0m ';
@@ -86,7 +86,7 @@ zephyr.check(async (err, msg) => {
   }
 });
 
-async function getChannel(guild, instance, create) {
+async function getChannel(guild, instance, {createChannel, defaultChannel}) {
   const channels = Array.from(guild.channels.cache.values())
       .filter(chan => chan.isTextBased());
   const name = zephyrNormalize(instance);
@@ -99,25 +99,27 @@ async function getChannel(guild, instance, create) {
   // instead of creating both a parent channel and a thread.
   const dot = name.indexOf('.');
   if (dot > 0) {
-    channel = channels.find(chan => zephyrNormalize(chan.name) ==
-        discordNormalize(name.substr(0, dot)));
+    channel = channels.find(chan => chan.type == discord.ChannelType.GuildText &&
+        discordNormalize(name.substr(0, dot)) == zephyrNormalize(chan.name));
     if (channel) {
       thread = Array.from(channel.threads.cache.values()).find(thr =>
-          zephyrNormalize(thr.name) == name.substr(dot + 1));
-      if (!thread && create)
+          name.substr(dot + 1) == zephyrNormalize(thr.name));
+      if (!thread)
         thread = await channel.threads.create({name: name.substr(dot + 1)})
             .catch(err => console.error(err));
     }
   }
   // Exact match to the instance, if there is one.
   if (!channel)
-    channel = channels.find(chan => zephyrNormalize(chan.name) ==
-        (chan.isText() ? discordNormalize(name) : name));
+    channel = channels.find(chan => (chan.type == discord.ChannelType.GuildText ?
+        discordNormalize(name) : name) == zephyrNormalize(chan.name));
   // If creation is enabled, try creating one.
-  if (!channel && create)
+  if (!channel && createChannel)
     channel = await guild.channels.create(name)
         .catch(err => console.error(err));
   // Otherwise, fall back to a default.
+  if (!channel && defaultChannel)
+    channel = channels.find(chan => defaultChannel == chan.name);
   if (!channel) channel = guild.systemChannel || channels[0];
   // No luck. This means the server has no text channels at all, in which case,
   // why are you running this bridge?
@@ -126,7 +128,7 @@ async function getChannel(guild, instance, create) {
   const webhook = await channel.fetchWebhooks()
       .then(hooks =>
           Array.from(hooks.values()).find(hook => hook.owner == client.user) ||
-          channel.createWebhook('zygarde'))
+          channel.createWebhook({name: 'zygarde'}))
       .catch(err => console.error(err));
   // We can send a message using any of webhook, channel, or thread.
   return {webhook, channel, thread, guild};
