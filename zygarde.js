@@ -6,14 +6,12 @@ const settings = require(process.argv[2] || `${process.cwd()}/settings`);
 function zephyrNormalize(str) {
   return str.normalize('NFKC').toLowerCase();
 }
-
 function discordNormalize(str) {
   // The regexes are copied from the Discord web client. The '-' is empirically
   // the result of trying to create a channel using only invalid characters.
   return str.replace(/[\s-~]+/g, '-').replace(/^-+/, '')
       .replace(/[\\'!"#$%&()*+,./:;<=>?@[\]^`{|}~]/g, '').toLowerCase() || '-';
 }
-
 function guildMatch(entry, guild) {
   return entry.discordServer == guild.name || entry.discordServer == guild.id;
 }
@@ -79,8 +77,8 @@ zephyr.check(async (err, msg) => {
       (thread || channel).send(sender + ': ' + msg.message);
       continue;
     }
-    const member = Array.from(guild.members.cache.values()).find(mem =>
-        mem.displayName == sender || mem.user.username == sender);
+    const member = Array.from(guild.members.cache.values()).find(m =>
+        [m.nickname, m.user.globalName, m.user.username].includes(sender));
     webhook.send({content: msg.message, threadId: thread?.id, username: sender,
         avatarURL: member && member.user.displayAvatarURL({dynamic: true})});
   }
@@ -103,7 +101,7 @@ async function getChannel(guild, instance, {createChannel, defaultChannel}) {
         discordNormalize(name.substr(0, dot)) == zephyrNormalize(chan.name));
     if (channel) {
       thread = Array.from(channel.threads.cache.values()).find(thr =>
-          name.substr(dot + 1) == zephyrNormalize(thr.name));
+          name.substr(dot + 1) == zephyrNormalize(thr.name) && !thr.archived);
       if (!thread)
         thread = await channel.threads.create({name: name.substr(dot + 1)})
             .catch(err => console.error(err));
@@ -147,7 +145,7 @@ client.on('messageCreate', async msg => {
 
   // It sounds like the only way for msg.member to be unset is if the author
   // left the server in between sending the message and the bot receiving it.
-  const sender = msg.member ? msg.member.displayName : msg.author.username;
+  const sender = msg.member ? msg.member.displayName : msg.author.displayName;
   // Find every class that matches the server. This is easier since we're just
   // sending to strings, rather than having to find a server with that name.
   const matching = [];
